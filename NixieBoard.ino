@@ -27,7 +27,7 @@ constexpr uint8_t  PROTO_VER    = 0x01;
 enum : uint8_t {
   CMD_SET_DIGIT  = 0x01,
   CMD_SET_MULTI  = 0x02,
-  // 0x03 reserved for dots
+  CMD_SET_DOTS   = 0x03,
   CMD_SET_TIME8  = 0x04,
   CMD_PING       = 0x20,
   CMD_PONG       = 0x21,
