@@ -23,11 +23,11 @@ constexpr uint8_t  SYNC0        = 0xA5;
 constexpr uint8_t  SYNC1        = 0x5A;
 constexpr uint8_t  PROTO_VER    = 0x01;
 
-/* Commands */
+/* Commands (NOTE: CMD_SET_DOTS uses a single index, not a mask) */
 enum : uint8_t {
   CMD_SET_DIGIT  = 0x01,
   CMD_SET_MULTI  = 0x02,
-  CMD_SET_DOTS   = 0x03,
+  CMD_SET_DOTS   = 0x03,   // payload: idx (0..7), or 0xFF = off
   CMD_SET_TIME8  = 0x04,
   CMD_PING       = 0x20,
   CMD_PONG       = 0x21,
@@ -53,6 +53,12 @@ static uint8_t crc8_maxim(const uint8_t* data, size_t len) {
 static uint32_t lastFrameMs = 0;
 static bool     blanked     = false;
 
+/* If your dot K155 output for tubes 3 and 6 is physically the same,
+   map both indices to the same BCD code here. Adjust as needed. */
+static const uint8_t DOT_BCD_MAP[8] = {
+  0, 1, 2, 3, 4, 5, 3, 7   // tube 3 and 6 -> BCD 3 (example)
+};
+
 /* Parser State Machine */
 enum RxState : uint8_t { WAIT_SYNC0, WAIT_SYNC1, WAIT_VER, WAIT_LEN, WAIT_CMD, WAIT_PAYLOAD, WAIT_CRC };
 static RxState rxState = WAIT_SYNC0;
@@ -63,6 +69,7 @@ static uint8_t payIdx = 0;
 /* === Helpers === */
 static void allClear() {
   for (uint8_t i = 0; i < NUM_TUBES; i++) tubes[i].clear();
+  dots.clear(); // also turn off dots
 }
 
 static void setBlank(bool on) {
@@ -71,7 +78,6 @@ static void setBlank(bool on) {
 }
 
 static void sendPong(uint8_t nonce) {
-  // Frame: [SYNC0][SYNC1][VER][LEN=2][CMD_PONG][nonce][CRC]
   uint8_t out[7] = { SYNC0, SYNC1, PROTO_VER, 2, CMD_PONG, nonce, 0 };
   const uint8_t crcbuf[4] = { PROTO_VER, 2, CMD_PONG, nonce };
   out[6] = crc8_maxim(crcbuf, sizeof(crcbuf));
@@ -99,11 +105,29 @@ static void handleSetTime8(const uint8_t* p, uint8_t n) {
   for (uint8_t i = 0; i < NUM_TUBES; i++) handleSetDigit(i, p[i]);
 }
 
+/* NEW: dots controlled by single index (0..7), 0xFF = off */
+static void handleSetDots(uint8_t idx) {
+  if (idx == 0xFF) {
+    dots.clear();
+#ifdef DEBUG_NIXIE
+    DBG("[DOT] off\r\n");
+#endif
+    return;
+  }
+  if (idx > 7) idx = 7;
+  uint8_t code = DOT_BCD_MAP[idx];
+  dots.display(code);
+#ifdef DEBUG_NIXIE
+  DBG("[DOT] idx=%u -> BCD=%u\r\n", idx, code);
+#endif
+}
+
 /* === Execute Parsed Command === */
 static void execCommand(uint8_t c, const uint8_t* p, uint8_t n) {
   switch (c) {
     case CMD_SET_DIGIT: if (n == 2) handleSetDigit(p[0], p[1]); break;
     case CMD_SET_MULTI:            handleSetMulti(p, n);        break;
+    case CMD_SET_DOTS:  if (n == 1) handleSetDots(p[0]);        break; // <--- added
     case CMD_SET_TIME8:            handleSetTime8(p, n);        break;
     case CMD_PING:       if (n == 1) sendPong(p[0]);            break;
     case CMD_MODE:       if (n == 1) setBlank(p[0] != 0);       break;
@@ -141,7 +165,6 @@ static void parserFeed(uint8_t b) {
       if (payIdx >= (uint8_t)(len - 1)) rxState = WAIT_CRC; // LEN counts CMD + payload
       break;
     case WAIT_CRC: {
-      // CRC over [VER][LEN][CMD][PAYLOAD...]
       uint8_t buf[1 + 1 + 1 + 32];
       buf[0] = ver; buf[1] = len; buf[2] = cmd;
       for (uint8_t i = 0; i < (uint8_t)(len - 1); i++) buf[3 + i] = payload[i];
@@ -173,11 +196,14 @@ void setup() {
 #endif
 
   Serial1.begin(SERIAL1_BAUD);   // UART link to host
+
+  // Init tubes and dots
   for (uint8_t i = 0; i < NUM_TUBES; i++) tubes[i].begin();
+  dots.begin();       // <--- init the dot K155 BCD pins
   lastFrameMs = millis();
   blanked = false;
 
-  allClear(); // start blank
+  allClear(); // start blank (digits + dots)
 }
 
 void loop() {
@@ -185,7 +211,7 @@ void loop() {
     parserFeed((uint8_t)Serial1.read());
   }
 
-  // Link timeout → auto-blank
+  // Link timeout → auto-blank (digits + dots)
   if (!blanked && (millis() - lastFrameMs) > LINK_TIMEOUT_MS) {
     setBlank(true);
 #ifdef DEBUG_NIXIE

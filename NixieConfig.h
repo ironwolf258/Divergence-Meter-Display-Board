@@ -1,5 +1,6 @@
 #pragma once
 #include "NixieTubes.h"
+#include "Dots.h"
 
 // How many tubes are in your display
 static const uint8_t NUM_TUBES = 8;
@@ -15,3 +16,4 @@ static NixieTube tubes[NUM_TUBES] = {
     NixieTube(46,47,48,49), // Tube 6
     NixieTube(50,51,52,53)  // Tube 7
 };
+static Dots dots = Dots(10,11,12,13);  // Decimal Points

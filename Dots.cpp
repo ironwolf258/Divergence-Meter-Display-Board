@@ -32,7 +32,7 @@ void Dots::display(uint8_t tube) {
         digitalWrite(_pins[2], HIGH);
         digitalWrite(_pins[3], HIGH);
     }
-    _current = digit;
+    _current = tube;
 }
 
 void Dots::clear() {
